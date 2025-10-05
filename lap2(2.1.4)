@@ -1,0 +1,174 @@
+# ============================================
+# BÀI 2.1.4 – CÂY QUYẾT ĐỊNH VÀ RỪNG CÂY (DIABETES DATA)
+# ============================================
+
+# 1️⃣ Tải package cần thiết
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib as mpl
+import seaborn as sns
+import graphviz
+
+# Giúp hiển thị đồ thị rõ hơn
+%matplotlib inline
+mpl.rcParams['figure.dpi'] = 300
+
+from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn import tree
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score, roc_auc_score, classification_report, confusion_matrix
+
+# --------------------------------------------
+# 2️⃣ Nạp dữ liệu vào bộ nhớ
+# --------------------------------------------
+# Dữ liệu Pima Indians Diabetes Dataset (tương đương với link trong bài)
+url = "https://raw.githubusercontent.com/plotly/datasets/master/diabetes.csv"
+df = pd.read_csv(url)
+
+print("Dữ liệu tải thành công!")
+print("Kích thước:", df.shape)
+df.head()
+
+# --------------------------------------------
+# 3️⃣ Phân tích và loại bỏ các features không liên quan (nếu có)
+# --------------------------------------------
+# Ở dataset này không có cột ID nên không cần loại bỏ
+# Kiểm tra dữ liệu trống và thay thế giá trị 0 cho các cột quan trọng bằng median
+cols_replace = ['Glucose','BloodPressure','SkinThickness','Insulin','BMI']
+for col in cols_replace:
+    df[col] = df[col].replace(0, np.nan)
+    df[col].fillna(df[col].median(), inplace=True)
+
+print("Số giá trị thiếu sau xử lý:")
+print(df.isnull().sum())
+
+# --------------------------------------------
+# 4️⃣ Chuẩn bị dữ liệu train và test
+# --------------------------------------------
+X = df.drop('Outcome', axis=1)
+y = df['Outcome']
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=24)
+
+print("Kích thước tập huấn luyện:", X_train.shape)
+print("Kích thước tập kiểm tra:", X_test.shape)
+
+# --------------------------------------------
+# 5️⃣ Xây dựng cây quyết định (Decision Tree)
+# --------------------------------------------
+dt = tree.DecisionTreeClassifier(max_depth=2, random_state=24)
+dt.fit(X_train, y_train)
+
+# --------------------------------------------
+# 6️⃣ Hiển thị cây quyết định bằng Graphviz
+# --------------------------------------------
+dot_data = tree.export_graphviz(dt,
+                                out_file=None,
+                                filled=True,
+                                rounded=True,
+                                feature_names=X.columns,
+                                proportion=True,
+                                class_names=['Not Diabetic', 'Diabetic'])
+graph = graphviz.Source(dot_data)
+display(graph)
+
+# --------------------------------------------
+# 7️⃣ Tìm tham số tối ưu cho cây quyết định bằng GridSearchCV
+# --------------------------------------------
+params = {'max_depth': [1, 2, 4, 6, 8, 10, 12]}
+dt_cv = tree.DecisionTreeClassifier(random_state=24)
+
+cv = GridSearchCV(dt_cv, param_grid=params, scoring='roc_auc',
+                  cv=4, return_train_score=True, verbose=1)
+cv.fit(X_train, y_train)
+
+print("Tham số tốt nhất:", cv.best_params_)
+print("AUC trung bình cao nhất:", cv.best_score_)
+
+# --------------------------------------------
+# 8️⃣ Vẽ biểu đồ đánh giá mô hình với các tham số khác nhau
+# --------------------------------------------
+cv_results_df = pd.DataFrame(cv.cv_results_)
+
+ax = plt.axes()
+ax.errorbar(cv_results_df['param_max_depth'],
+            cv_results_df['mean_train_score'],
+            yerr=cv_results_df['std_train_score']/np.sqrt(4),
+            label='Mean ± 1SE training scores')
+ax.errorbar(cv_results_df['param_max_depth'],
+            cv_results_df['mean_test_score'],
+            yerr=cv_results_df['std_test_score']/np.sqrt(4),
+            label='Mean ± 1SE testing scores')
+
+ax.legend()
+plt.xlabel('max_depth')
+plt.ylabel('ROC AUC')
+plt.title('Đánh giá hiệu quả theo độ sâu của cây')
+plt.show()
+
+# --------------------------------------------
+# 9️⃣ Xây dựng mô hình RỪNG CÂY (Random Forest)
+# --------------------------------------------
+rf = RandomForestClassifier(
+    n_estimators=10,
+    criterion='gini',
+    max_depth=3,
+    random_state=24,
+    bootstrap=True
+)
+
+# Tìm số cây tối ưu
+rf_params = {'n_estimators': list(range(10, 110, 10))}
+cv_rf = GridSearchCV(rf, param_grid=rf_params, scoring='roc_auc',
+                     cv=4, return_train_score=True, verbose=1)
+cv_rf.fit(X_train, y_train)
+
+print("Tham số tối ưu (số cây):", cv_rf.best_params_)
+print("AUC trung bình cao nhất:", cv_rf.best_score_)
+
+# --------------------------------------------
+# 🔟 Vẽ biểu đồ đánh giá mô hình Rừng cây
+# --------------------------------------------
+cv_rf_results_df = pd.DataFrame(cv_rf.cv_results_)
+
+fig, axs = plt.subplots(nrows=1, ncols=2, figsize=(8, 3))
+axs[0].plot(cv_rf_results_df['param_n_estimators'],
+            cv_rf_results_df['mean_fit_time'], '-o')
+axs[0].set_xlabel('Số cây (n_estimators)')
+axs[0].set_ylabel('Thời gian huấn luyện (s)')
+
+axs[1].errorbar(cv_rf_results_df['param_n_estimators'],
+                cv_rf_results_df['mean_test_score'],
+                yerr=cv_rf_results_df['std_test_score']/np.sqrt(4))
+axs[1].set_xlabel('Số cây (n_estimators)')
+axs[1].set_ylabel('ROC AUC trung bình ± 1SE')
+axs[1].set_title('Đánh giá hiệu quả rừng cây')
+
+plt.tight_layout()
+plt.show()
+
+# --------------------------------------------
+# 1️⃣1️⃣ Xem tham số tốt nhất và mức độ quan trọng của các feature
+# --------------------------------------------
+print("Tham số tốt nhất của mô hình RF:", cv_rf.best_params_)
+
+best_rf = cv_rf.best_estimator_
+feat_imp_df = pd.DataFrame({
+    'Importance': best_rf.feature_importances_
+}, index=X.columns)
+feat_imp_df.sort_values('Importance', ascending=True).plot.barh(figsize=(6, 4))
+plt.title('Mức độ quan trọng của các đặc trưng (Feature Importance)')
+plt.show()
+
+# --------------------------------------------
+# 1️⃣2️⃣ Đánh giá cuối cùng
+# --------------------------------------------
+y_pred = best_rf.predict(X_test)
+print("\n--- ĐÁNH GIÁ TRÊN TẬP KIỂM TRA ---")
+print("Accuracy:", accuracy_score(y_test, y_pred))
+print("ROC AUC:", roc_auc_score(y_test, best_rf.predict_proba(X_test)[:,1]))
+print("\nClassification Report:\n", classification_report(y_test, y_pred))
+sns.heatmap(confusion_matrix(y_test, y_pred), annot=True, fmt='d', cmap="YlGnBu")
+plt.title("Confusion Matrix")
+plt.show()
